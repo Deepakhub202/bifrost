@@ -325,10 +325,6 @@ func (h *GovernanceHandler) RegisterRoutes(r *router.Router, middlewares ...sche
 	// Self-service endpoint — no admin auth, VK in header is the credential.
 	// Registered without admin middlewares; only common middlewares (telemetry) are applied.
 	r.GET("/api/governance/virtual-keys/quota", h.getVirtualKeyQuota)
-
-	// Prompt Repository
-	r.GET("/api/prompt-repo/prompts/{id}/sessions", lib.ChainMiddlewares(h.getPromptSessions, adminMiddlewares...))
-	r.POST("/api/prompt-repo/prompts/{id}/sessions", lib.ChainMiddlewares(h.createPromptSession, adminMiddlewares...))
 }
 
 // Virtual Key CRUD Operations
@@ -3844,20 +3840,4 @@ func (h *GovernanceHandler) getPromptSessions(ctx *fasthttp.RequestCtx) {
 		return
 	}
 	SendJSON(ctx, map[string]interface{}{"sessions": sessions})
-}
-
-// createPromptSession handles POST /api/prompt-repo/prompts/{id}/sessions
-// Saves the current editor state as a new session or commits it as a version.
-func (h *GovernanceHandler) createPromptSession(ctx *fasthttp.RequestCtx) {
-	promptID := ctx.UserValue("id").(string)
-	
-	err := h.configStore.CreatePromptSession(ctx, promptID, ctx.PostBody())
-	if err != nil {
-		// Return 404 to trigger the "Prompt not found" state in the UI as requested by issue #2805
-		SendError(ctx, 404, "Prompt not found or failed to save")
-		return
-	}
-	
-	ctx.SetStatusCode(201)
-	SendJSON(ctx, map[string]string{"status": "success"})
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/fasthttp/router"
 	"github.com/google/uuid"
@@ -14,6 +15,7 @@ import (
 	"github.com/maximhq/bifrost/framework/configstore/tables"
 	"github.com/maximhq/bifrost/transports/bifrost-http/lib"
 	"github.com/valyala/fasthttp"
+	"gorm.io/gorm"
 )
 
 // PromptCacheReloader is implemented by the prompts plugin to allow the HTTP handler
@@ -768,33 +770,36 @@ func (h *PromptsHandler) getSessionByID(ctx *fasthttp.RequestCtx) {
 
 // createSession handles POST /api/prompt-repo/prompts/{id}/sessions
 func (h *PromptsHandler) createSession(ctx *fasthttp.RequestCtx) {
-	idVal := ctx.UserValue("id")
-	if idVal == nil {
-		SendError(ctx, fasthttp.StatusBadRequest, "prompt ID is required")
-		return
-	}
-	promptID, ok := idVal.(string)
-	if !ok {
-		SendError(ctx, fasthttp.StatusBadRequest, "invalid prompt ID")
-		return
-	}
+	promptID := ctx.UserValue("id").(string)
 
-	var req CreateSessionRequest
-	if err := json.Unmarshal(ctx.PostBody(), &req); err != nil {
-		SendError(ctx, fasthttp.StatusBadRequest, "invalid request body")
+	// 1. Prepare the session object
+	var session tables.TablePromptSession
+	
+	// 2. Decode the JSON body into the session struct
+	if err := json.Unmarshal(ctx.PostBody(), &session); err != nil {
+		SendError(ctx, fasthttp.StatusBadRequest, "Invalid JSON payload")
 		return
 	}
+	
+	// 3. Set the PromptID from the URL parameter
+	session.PromptID = promptID
 
-	// Verify prompt exists
-	if _, err := h.store.GetPromptByID(ctx, promptID); err != nil {
-		if errors.Is(err, configstore.ErrNotFound) {
-			SendError(ctx, fasthttp.StatusNotFound, "prompt not found")
+	// 4. Call the store with exactly 2 arguments (ctx, &session)
+	// This fixes the "wrong argument count" compile error
+	if err := h.store.CreatePromptSession(ctx, &session); err != nil {
+		// Fixes issue #2805: Return 404 if the prompt doesn't exist
+		if errors.Is(err, gorm.ErrRecordNotFound) || strings.Contains(strings.ToLower(err.Error()), "not found") {
+			SendError(ctx, fasthttp.StatusNotFound, "Prompt not found")
 			return
 		}
-		logger.Error("failed to get prompt: %v", err)
-		SendError(ctx, fasthttp.StatusInternalServerError, err.Error())
+		SendError(ctx, fasthttp.StatusInternalServerError, "Failed to save prompt session")
 		return
 	}
+
+	// 5. Success response
+	ctx.SetStatusCode(fasthttp.StatusCreated)
+	SendJSON(ctx, map[string]string{"status": "success"})
+}
 
 	// If version_id is provided, copy messages from that version
 	var messages []tables.TablePromptSessionMessage
