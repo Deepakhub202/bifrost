@@ -15,7 +15,6 @@ import (
 	"github.com/maximhq/bifrost/framework/configstore/tables"
 	"github.com/maximhq/bifrost/transports/bifrost-http/lib"
 	"github.com/valyala/fasthttp"
-	"gorm.io/gorm"
 )
 
 // PromptCacheReloader is implemented by the prompts plugin to allow the HTTP handler
