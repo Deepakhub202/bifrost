@@ -874,67 +874,65 @@ func (h *PromptsHandler) createSession(ctx *fasthttp.RequestCtx) {
 	})
 }
 
-// updateSession handles PUT /api/prompt-repo/sessions/{id}
-func (h *PromptsHandler) updateSession(ctx *fasthttp.RequestCtx) {
-	idVal := ctx.UserValue("id")
-	if idVal == nil {
-		SendError(ctx, fasthttp.StatusBadRequest, "session ID is required")
-		return
-	}
-	idStr, ok := idVal.(string)
-	if !ok {
-		SendError(ctx, fasthttp.StatusBadRequest, "invalid session ID")
-		return
-	}
-	id, err := strconv.ParseUint(idStr, 10, 32)
-	if err != nil {
-		SendError(ctx, fasthttp.StatusBadRequest, "invalid session ID")
+// createSession handles POST /api/prompt-repo/prompts/{id}/sessions
+func (h *PromptsHandler) createSession(ctx *fasthttp.RequestCtx) {
+	promptID := ctx.UserValue("id").(string)
+
+	// Verify prompt exists first
+	if _, err := h.store.GetPromptByID(ctx, promptID); err != nil {
+		if errors.Is(err, configstore.ErrNotFound) {
+			SendError(ctx, fasthttp.StatusNotFound, "prompt not found")
+			return
+		}
+		SendError(ctx, fasthttp.StatusInternalServerError, err.Error())
 		return
 	}
 
-	var req UpdateSessionRequest
+	var req CreateSessionRequest
 	if err := json.Unmarshal(ctx.PostBody(), &req); err != nil {
 		SendError(ctx, fasthttp.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	session, err := h.store.GetPromptSessionByID(ctx, uint(id))
-	if err != nil {
-		if errors.Is(err, configstore.ErrNotFound) {
-			SendError(ctx, fasthttp.StatusNotFound, "session not found")
+	session := &tables.TablePromptSession{
+		PromptID:    promptID,
+		Name:        req.Name,
+		Provider:    req.Provider,
+		Model:       req.Model,
+		ModelParams: req.ModelParams,
+		Messages:    make(tables.PromptMessages, 0),
+		Variables:   make(tables.PromptVariables),
+	}
+
+	// If a version ID is provided, seed the session from that version
+	if req.VersionID != "" {
+		version, err := h.store.GetPromptVersionByID(ctx, req.VersionID)
+		if err != nil {
+			if errors.Is(err, configstore.ErrNotFound) {
+				SendError(ctx, fasthttp.StatusNotFound, "version not found")
+				return
+			}
+			SendError(ctx, fasthttp.StatusInternalServerError, err.Error())
 			return
 		}
-		logger.Error("failed to get session: %v", err)
-		SendError(ctx, fasthttp.StatusInternalServerError, err.Error())
+		session.Provider = version.Provider
+		session.Model = version.Model
+		session.ModelParams = version.ModelParams
+		for _, msg := range version.Messages {
+			session.Messages = append(session.Messages, tables.PromptMessage{
+				Role:    "user", // Default or derived role
+				Message: msg.Message,
+			})
+		}
+	}
+
+	// FIX: Use exactly 2 arguments (ctx, session) to match the interface
+	if err := h.store.CreatePromptSession(ctx, session); err != nil {
+		SendError(ctx, fasthttp.StatusInternalServerError, "failed to create session")
 		return
 	}
 
-	if req.Name != "" {
-		session.Name = req.Name
-	}
-	session.ModelParams = req.ModelParams
-	session.Provider = req.Provider
-	session.Model = req.Model
-	if req.Variables != nil {
-		session.Variables = req.Variables
-	}
-
-	// Update messages
-	var messages []tables.TablePromptSessionMessage
-	for _, msg := range req.Messages {
-		messages = append(messages, tables.TablePromptSessionMessage{
-			PromptID: session.PromptID,
-			Message:  msg,
-		})
-	}
-	session.Messages = messages
-
-	if err := h.store.UpdatePromptSession(ctx, session); err != nil {
-		logger.Error("failed to update session: %v", err)
-		SendError(ctx, fasthttp.StatusInternalServerError, err.Error())
-		return
-	}
-
+	ctx.SetStatusCode(fasthttp.StatusCreated)
 	SendJSON(ctx, map[string]any{
 		"session": session,
 	})
