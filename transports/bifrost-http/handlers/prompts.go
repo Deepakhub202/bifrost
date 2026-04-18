@@ -785,9 +785,7 @@ func (h *PromptsHandler) createSession(ctx *fasthttp.RequestCtx) {
 	session.PromptID = promptID
 
 	// 4. Call the store with exactly 2 arguments (ctx, &session)
-	// This fixes the "wrong argument count" compile error
 	if err := h.store.CreatePromptSession(ctx, &session); err != nil {
-		// Fixes issue #2805: Return 404 if the prompt doesn't exist
 		if errors.Is(err, gorm.ErrRecordNotFound) || strings.Contains(strings.ToLower(err.Error()), "not found") {
 			SendError(ctx, fasthttp.StatusNotFound, "Prompt not found")
 			return
@@ -796,9 +794,11 @@ func (h *PromptsHandler) createSession(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
-	// 5. Success response
+	// 5. Success response - Modified to return the session object as requested by Greptile
 	ctx.SetStatusCode(fasthttp.StatusCreated)
-	SendJSON(ctx, map[string]string{"status": "success"})
+	SendJSON(ctx, map[string]any{
+		"session": session,
+	})
 }
 
 	// If version_id is provided, copy messages from that version
