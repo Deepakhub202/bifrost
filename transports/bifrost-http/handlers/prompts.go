@@ -51,11 +51,11 @@ func (h *PromptsHandler) reloadCache(ctx context.Context) {
 }
 
 type CreateSessionRequest struct {
-	Name        string                   `json:"name"`
-	VersionID   string                   `json:"version_id"`
-	Provider    string                   `json:"provider"`
-	Model       string                   `json:"model"`
-	ModelParams tables.PromptModelParams `json:"model_params"`
+	Name        string             `json:"name"`
+	VersionID   string             `json:"version_id"`
+	Provider    string             `json:"provider"`
+	Model       string             `json:"model"`
+	ModelParams tables.ModelParams `json:"model_params"`
 }
 
 // RegisterRoutes registers the routes for the PromptsHandler
@@ -780,7 +780,7 @@ func (h *PromptsHandler) getSessionByID(ctx *fasthttp.RequestCtx) {
 func (h *PromptsHandler) createSession(ctx *fasthttp.RequestCtx) {
 	promptID := ctx.UserValue("id").(string)
 
-	// 1. Verify prompt exists to ensure data integrity
+	// 1. Verify prompt exists
 	if _, err := h.store.GetPromptByID(ctx, promptID); err != nil {
 		if errors.Is(err, configstore.ErrNotFound) || strings.Contains(strings.ToLower(err.Error()), "not found") {
 			SendError(ctx, fasthttp.StatusNotFound, "prompt not found")
@@ -790,27 +790,33 @@ func (h *PromptsHandler) createSession(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
-	// 2. Parse the request body using our custom struct
 	var req CreateSessionRequest
 	if err := json.Unmarshal(ctx.PostBody(), &req); err != nil {
 		SendError(ctx, fasthttp.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	// 3. Initialize the session object
+	// 2. Initialize session with CORRECT internal types
 	session := &tables.TablePromptSession{
 		PromptID:    promptID,
 		Name:        req.Name,
 		Provider:    req.Provider,
 		Model:       req.Model,
 		ModelParams: req.ModelParams,
-		Messages:    make(tables.PromptMessages, 0),
+		Messages:    make([]tables.TablePromptSessionMessage, 0), // Correct type
 		Variables:   make(tables.PromptVariables),
 	}
 
-	// 4. If a version ID is provided, seed the session with that version's data
+	// 3. Handle version seeding with ID conversion (string to uint)
 	if req.VersionID != "" {
-		version, err := h.store.GetPromptVersionByID(ctx, req.VersionID)
+		// Fix: Parse string ID to uint for the store call
+		vID, err := strconv.ParseUint(req.VersionID, 10, 32)
+		if err != nil {
+			SendError(ctx, fasthttp.StatusBadRequest, "invalid version_id format")
+			return
+		}
+
+		version, err := h.store.GetPromptVersionByID(ctx, uint(vID))
 		if err != nil {
 			if errors.Is(err, configstore.ErrNotFound) {
 				SendError(ctx, fasthttp.StatusNotFound, "version not found")
@@ -819,24 +825,27 @@ func (h *PromptsHandler) createSession(ctx *fasthttp.RequestCtx) {
 			SendError(ctx, fasthttp.StatusInternalServerError, err.Error())
 			return
 		}
+
 		session.Provider = version.Provider
 		session.Model = version.Model
 		session.ModelParams = version.ModelParams
+		
+		// Fix: Correctly map version messages to session messages
 		for _, msg := range version.Messages {
-			session.Messages = append(session.Messages, tables.PromptMessage{
-				Role:    "user",
-				Message: msg.Message,
+			session.Messages = append(session.Messages, tables.TablePromptSessionMessage{
+				PromptID: promptID,
+				Message:  msg.Message,
 			})
 		}
 	}
 
-	// 5. Save the session using the corrected 2-argument signature
+	// 4. Save using exactly 2 arguments
 	if err := h.store.CreatePromptSession(ctx, session); err != nil {
 		SendError(ctx, fasthttp.StatusInternalServerError, "failed to create session")
 		return
 	}
 
-	// 6. Return the full session object as requested by reviewers
+	// 5. Success response
 	ctx.SetStatusCode(fasthttp.StatusCreated)
 	SendJSON(ctx, map[string]any{
 		"session": session,
