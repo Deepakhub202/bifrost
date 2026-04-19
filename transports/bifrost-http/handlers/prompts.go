@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 
 	"github.com/fasthttp/router"
 	"github.com/google/uuid"
@@ -816,11 +815,13 @@ func (h *PromptsHandler) createSession(ctx *fasthttp.RequestCtx) {
 			return
 		}
 		// Copy messages from version
-		for _, msg := range version.Messages {
-			messages = append(messages, tables.TablePromptSessionMessage{
-				PromptID: promptID,
-				Message:  msg.Message,
-			})
+		if len(req.Messages) == 0 {
+			for _, msg := range version.Messages {
+				messages = append(messages, tables.TablePromptSessionMessage{
+					PromptID: promptID,
+					Message:  msg.Message,
+				})
+			}
 		}
 		// Use version's model params, provider, model if not provided
 		if req.Provider == "" {
@@ -840,14 +841,16 @@ func (h *PromptsHandler) createSession(ctx *fasthttp.RequestCtx) {
 		}
 	}
 	if req.Variables == nil {
-        req.Variables = make(tables.PromptVariables)
-    }
-		// Use provided messages
-	for _, msg := range req.Messages {
-		messages = append(messages, tables.TablePromptSessionMessage{
-			PromptID: promptID,
-			Message:  msg,
-		})
+		req.Variables = make(tables.PromptVariables)
+	}
+	// Use provided messages
+	if len(req.Messages) > 0 {
+		for _, msg := range req.Messages {
+			messages = append(messages, tables.TablePromptSessionMessage{
+				PromptID: promptID,
+				Message:  msg,
+			})
+		}
 	}
 
 	session := &tables.TablePromptSession{
