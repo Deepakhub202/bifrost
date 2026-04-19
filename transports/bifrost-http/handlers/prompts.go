@@ -795,20 +795,19 @@ func (h *PromptsHandler) createSession(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
-	// 2. Initialize session with CORRECT internal types
+	// 2. Initialize session with user-provided data
 	session := &tables.TablePromptSession{
 		PromptID:    promptID,
 		Name:        req.Name,
 		Provider:    req.Provider,
 		Model:       req.Model,
 		ModelParams: req.ModelParams,
-		Messages:    make([]tables.TablePromptSessionMessage, 0), // Correct type
+		Messages:    make([]tables.TablePromptSessionMessage, 0),
 		Variables:   make(tables.PromptVariables),
 	}
 
-	// 3. Handle version seeding with ID conversion (string to uint)
+	// 3. Handle version seeding with ID conversion and conditional fallback
 	if req.VersionID != "" {
-		// Fix: Parse string ID to uint for the store call
 		vID, err := strconv.ParseUint(req.VersionID, 10, 32)
 		if err != nil {
 			SendError(ctx, fasthttp.StatusBadRequest, "invalid version_id format")
@@ -825,11 +824,17 @@ func (h *PromptsHandler) createSession(ctx *fasthttp.RequestCtx) {
 			return
 		}
 
-		session.Provider = version.Provider
-		session.Model = version.Model
-		session.ModelParams = version.ModelParams
+		// SMART ASSIGNMENT: Only use version values if the request didn't supply them
+		if session.Provider == "" {
+			session.Provider = version.Provider
+		}
+		if session.Model == "" {
+			session.Model = version.Model
+		}
+		if len(session.ModelParams) == 0 {
+			session.ModelParams = version.ModelParams
+		}
 		
-		// Fix: Correctly map version messages to session messages
 		for _, msg := range version.Messages {
 			session.Messages = append(session.Messages, tables.TablePromptSessionMessage{
 				PromptID: promptID,
