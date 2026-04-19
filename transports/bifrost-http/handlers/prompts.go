@@ -795,7 +795,13 @@ func (h *PromptsHandler) createSession(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
-	// 2. Initialize session with user-provided data
+	// 2. Initialize session variables from request or create empty map
+	vars := req.Variables
+	if vars == nil {
+		vars = make(tables.PromptVariables)
+	}
+
+	// 3. Initialize session with user-provided data
 	session := &tables.TablePromptSession{
 		PromptID:    promptID,
 		Name:        req.Name,
@@ -803,18 +809,12 @@ func (h *PromptsHandler) createSession(ctx *fasthttp.RequestCtx) {
 		Model:       req.Model,
 		ModelParams: req.ModelParams,
 		Messages:    make([]tables.TablePromptSessionMessage, 0),
-		Variables:   make(tables.PromptVariables),
+		Variables:   vars,
 	}
 
-	// 3. Handle version seeding with ID conversion and conditional fallback
-	if req.VersionID != "" {
-		vID, err := strconv.ParseUint(req.VersionID, 10, 32)
-		if err != nil {
-			SendError(ctx, fasthttp.StatusBadRequest, "invalid version_id format")
-			return
-		}
-
-		version, err := h.store.GetPromptVersionByID(ctx, uint(vID))
+	// 4. Handle version seeding directly with the *uint
+	if req.VersionID != nil {
+		version, err := h.store.GetPromptVersionByID(ctx, *req.VersionID)
 		if err != nil {
 			if errors.Is(err, configstore.ErrNotFound) {
 				SendError(ctx, fasthttp.StatusNotFound, "version not found")
@@ -835,21 +835,30 @@ func (h *PromptsHandler) createSession(ctx *fasthttp.RequestCtx) {
 			session.ModelParams = version.ModelParams
 		}
 		
+		// Copy Messages
 		for _, msg := range version.Messages {
 			session.Messages = append(session.Messages, tables.TablePromptSessionMessage{
 				PromptID: promptID,
 				Message:  msg.Message,
 			})
 		}
+
+		// FIX: Seed Variables from version exactly as Greptile requested
+		if len(session.Variables) == 0 && len(version.Variables) > 0 {
+			session.Variables = make(tables.PromptVariables, len(version.Variables))
+			for key := range version.Variables {
+				session.Variables[key] = ""
+			}
+		}
 	}
 
-	// 4. Save using exactly 2 arguments
+	// 5. Save using exactly 2 arguments
 	if err := h.store.CreatePromptSession(ctx, session); err != nil {
 		SendError(ctx, fasthttp.StatusInternalServerError, "failed to create session")
 		return
 	}
 
-	// 5. Success response
+	// 6. Success response
 	ctx.SetStatusCode(fasthttp.StatusCreated)
 	SendJSON(ctx, map[string]any{
 		"session": session,
