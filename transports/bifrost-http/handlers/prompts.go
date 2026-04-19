@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/fasthttp/router"
 	"github.com/google/uuid"
@@ -837,14 +838,16 @@ func (h *PromptsHandler) createSession(ctx *fasthttp.RequestCtx) {
 				req.Variables[key] = ""
 			}
 		}
-	} else {
+	}
+	if req.Variables == nil {
+        req.Variables = make(tables.PromptVariables)
+    }
 		// Use provided messages
-		for _, msg := range req.Messages {
-			messages = append(messages, tables.TablePromptSessionMessage{
-				PromptID: promptID,
-				Message:  msg,
-			})
-		}
+	for _, msg := range req.Messages {
+		messages = append(messages, tables.TablePromptSessionMessage{
+			PromptID: promptID,
+			Message:  msg,
+		})
 	}
 
 	session := &tables.TablePromptSession{
