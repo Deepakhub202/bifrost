@@ -773,11 +773,9 @@ func (h *PromptsHandler) createSession(ctx *fasthttp.RequestCtx) {
 		SendError(ctx, fasthttp.StatusBadRequest, "prompt ID is required")
 		return
 	}
-	promptID, ok := idVal.(string)
-	if !ok {
-		SendError(ctx, fasthttp.StatusBadRequest, "invalid prompt ID")
-		return
-	}
+
+	// ✅ FIX: safe conversion (handles string, []byte, etc.)
+	promptID := fmt.Sprintf("%v", idVal)
 
 	var req CreateSessionRequest
 	if err := json.Unmarshal(ctx.PostBody(), &req); err != nil {
@@ -809,21 +807,22 @@ func (h *PromptsHandler) createSession(ctx *fasthttp.RequestCtx) {
 			SendError(ctx, fasthttp.StatusInternalServerError, err.Error())
 			return
 		}
+
 		// Verify version belongs to this prompt
 		if version.PromptID != promptID {
 			SendError(ctx, fasthttp.StatusBadRequest, "version does not belong to this prompt")
 			return
 		}
+
 		// Copy messages from version
-		if len(req.Messages) == 0 {
-			for _, msg := range version.Messages {
-				messages = append(messages, tables.TablePromptSessionMessage{
-					PromptID: promptID,
-					Message:  msg.Message,
-				})
-			}
+		for _, msg := range version.Messages {
+			messages = append(messages, tables.TablePromptSessionMessage{
+				PromptID: promptID,
+				Message:  msg.Message,
+			})
 		}
-		// Use version's model params, provider, model if not provided
+
+		// Use version defaults if not provided
 		if req.Provider == "" {
 			req.Provider = version.Provider
 		}
@@ -839,12 +838,8 @@ func (h *PromptsHandler) createSession(ctx *fasthttp.RequestCtx) {
 				req.Variables[key] = ""
 			}
 		}
-	}
-	if req.Variables == nil {
-		req.Variables = make(tables.PromptVariables)
-	}
-	// Use provided messages
-	if len(req.Messages) > 0 {
+	} else {
+		// Use provided messages
 		for _, msg := range req.Messages {
 			messages = append(messages, tables.TablePromptSessionMessage{
 				PromptID: promptID,
